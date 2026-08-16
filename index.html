@@ -56,7 +56,7 @@ const SFX = (function(){
       ac=new A(); master=ac.createGain(); master.gain.value=0.20; master.connect(ac.destination); }
       if(ac.state==='suspended') ac.resume(); }catch(e){} },
     toggle(){ on=!on; BGM.setMuted(!on); },
-    shari(n){ noise(0.5, 700+Math.min(n||0,14)*90, 0.06); },
+    shari(n,thin){ noise(0.5, 700+Math.min(n||0,14)*90 + (thin||0)*40, 0.06); }, // 細いほど高音（議題2 真希案）
     kyu(){ noise(0.25, 2400, 0.05); },
     putsun(){ tone(180,0.12,'sawtooth',0.5); noise(0.7,300,0.10); },
     beep(){ tone(440,0.18,'square',0.5); },
@@ -160,8 +160,13 @@ const pearGroup = new THREE.Group(); scene.add(pearGroup);
 pearGroup.position.x=-0.42;
 let fleshMesh, skinMesh, guideMesh, stemMesh, bugSprite;
 function buildMeshes(){
-  const fleshMat = new THREE.MeshPhongMaterial({ color:0xf7eed6, shininess:35, specular:0x554433 });
-  fleshMesh = new THREE.Mesh(makeLathe(0.985), fleshMat); pearGroup.add(fleshMesh);
+  // 議題2: 果肉は生成した果肉画像をタイルして貼る（真っ白ではなく みずみずしい質感）
+  const fc=document.createElement('canvas'); fc.width=512; fc.height=256; const fcx=fc.getContext('2d');
+  for(let i=0;i<4;i++){ fcx.save(); if(i%2){ fcx.translate(128*i+128,0); fcx.scale(-1,1);} else fcx.translate(128*i,0);
+    fcx.drawImage(IMG.flesh, 150,150,220,220, 0,0,128,256); fcx.restore(); }
+  const fleshTex=new THREE.CanvasTexture(fc); fleshTex.wrapS=THREE.RepeatWrapping; fleshTex.colorSpace=THREE.SRGBColorSpace;
+  const fleshMat = new THREE.MeshPhongMaterial({ map:fleshTex, shininess:45, specular:0x665544, emissive:0x2a2418 });
+  fleshMesh = new THREE.Mesh(makeLathe(0.975), fleshMat); pearGroup.add(fleshMesh); // 皮より2.5%内側=切り口の段差
   const skinMat = new THREE.MeshPhongMaterial({ map:skinTex, transparent:true, shininess:12 });
   skinMesh = new THREE.Mesh(makeLathe(1.0), skinMat); pearGroup.add(skinMesh);
   const guideMat = new THREE.MeshBasicMaterial({ map:guideTex, transparent:true, depthWrite:false });
@@ -193,17 +198,20 @@ const MODES = [
 ];
 let selCourse=0, selMode=1;
 
-// らせん: s∈[0,1] → (u,v)
-function courseUV(s, turns){ return { u:(s*turns)%1, v:0.06+0.86*s }; }
+// らせん: s∈[0,1] → (u,v)  ※上(ヘタ側)から下へ剥き下ろす（右利きの自然な動き）
+function courseUV(s, turns){ return { u:(s*turns)%1, v:0.92-0.86*s }; }
+// Three.js LatheGeometry のUV規約に合わせる: x=sin(θ), z=cos(θ)（θ=u·2π）
 function localPoint(u,v,scale){ const th=u*Math.PI*2, r=Rv(v)*(scale||1.0);
-  return new THREE.Vector3(Math.cos(th)*r, Yv(v), Math.sin(th)*r); }
+  return new THREE.Vector3(Math.sin(th)*r, Yv(v), Math.cos(th)*r); }
+function uvOfLocal(p){ let u=Math.atan2(p.x,p.z)/(Math.PI*2); if(u<0)u+=1;
+  return { u, v:clamp((p.y+1.05)/2.1,0,1) }; }
 
 let pxPerWorld = 130; // 起動時に実測
 const _v3 = new THREE.Vector3();
 function toScreen(p){ _v3.copy(p).applyMatrix4(pearGroup.matrixWorld).project(camera);
   return { x:(_v3.x*0.5+0.5)*W, y:(-_v3.y*0.5+0.5)*H, z:_v3.z }; }
-function facing(u){ // 表側を向いているか（回転後の法線z成分: sin(θ-rotY)）
-  return Math.sin(u*Math.PI*2 - pearGroup.rotation.y);
+function facing(u){ // 表側を向いているか（回転後の法線z成分: cos(θ+rotY)）
+  return Math.cos(u*Math.PI*2 + pearGroup.rotation.y);
 }
 
 function buildPath(turns){
@@ -245,8 +253,7 @@ function drawGuide(fromS){
   guideCx.globalAlpha=1; guideCx.setLineDash([]);
   // 赤星病・カメムシ跡（回廊内の片側に寄せて描く＝反対側を通れば避けられる）
   const half=G.course.width/2;
-  const toUV=(p)=>{ const th=Math.atan2(p.z,p.x); let u=th/(Math.PI*2); if(u<0)u+=1;
-    const v=clamp((p.y+1.05)/2.1,0,1); return {x:u*TEXW, y:(1-v)*TEXH}; };
+  const toUV=(p)=>{ const {u,v}=uvOfLocal(p); return {x:u*TEXW, y:(1-v)*TEXH}; };
   for(const a of G.obs.akaboshi){ if(a.s<fromS) continue;
     const {x,y}=toUV(obstaclePos(a,a.s,half).p);
     const gr=guideCx.createRadialGradient(x,y,2,x,y,24);
@@ -263,29 +270,38 @@ function drawGuide(fromS){
 
 // 皮を消す: 幅wPx（今のスピード依存）・横ずれlat（回廊内のどこを通ったか）
 function eraseSkin(s0,s1,wPx,latPx){
-  skinCx.save(); skinCx.globalCompositeOperation='destination-out';
   const half=G.course.width/2;
+  const pts=[];
   for(let s=s0; s<=s1; s+=2/pxPerWorld*3){
     const o={off:clamp(latPx/half,-1,1)};
     const q=obstaclePos(o,s,half);
-    const p=q.p; const th=Math.atan2(p.z,p.x); let u=th/(Math.PI*2); if(u<0)u+=1;
-    const v=clamp((p.y+1.05)/2.1,0,1);
+    const {u,v}=uvOfLocal(q.p);
     const rWorld=(wPx/2+3)/pxPerWorld;
-    const rx=rWorld/(2*Math.PI*Math.max(0.15,Rv(v)))*TEXW;
-    const ry=rWorld/2.1*TEXH;
-    const x=u*TEXW, y=(1-v)*TEXH;
-    for(const ox of [0,-TEXW,TEXW]){
-      skinCx.beginPath(); skinCx.ellipse(x+ox,y,rx,ry,0,0,6.2832); skinCx.fill(); }
+    pts.push({ x:u*TEXW, y:(1-v)*TEXH,
+      rx:rWorld/(2*Math.PI*Math.max(0.15,Rv(v)))*TEXW, ry:rWorld/2.1*TEXH });
   }
+  // 議題2(瑞季案): 縁に薄い影→内側をくり抜く。数珠模様を避けるため連続ストロークで描く
+  if(pts.length<2){ pts.push({...pts[0], x:pts[0].x+0.5}); }
+  const strokePath=(extra)=>{
+    for(let i=1;i<pts.length;i++){ const a=pts[i-1], b=pts[i];
+      if(Math.abs(b.x-a.x)>TEXW*0.5) continue; // 継ぎ目またぎはスキップ
+      skinCx.lineWidth=Math.max(1,(a.ry+b.ry)+extra*2); skinCx.lineCap='round';
+      for(const ox of [0,-TEXW,TEXW]){ skinCx.beginPath(); skinCx.moveTo(a.x+ox,a.y); skinCx.lineTo(b.x+ox,b.y); skinCx.stroke(); } }
+    // 先端の丸（前区間との継ぎ目を滑らかに）
+    const p=pts[0]; for(const ox of [0,-TEXW,TEXW]){ skinCx.beginPath(); skinCx.ellipse(p.x+ox,p.y,p.rx+extra,p.ry+extra,0,0,6.2832); skinCx.fill(); }
+  };
+  // 縁影は果肉メッシュ(半径0.985)との段差で自然に出るので塗らない（毎フレーム塗ると数珠模様になる）
+  skinCx.save();
+  skinCx.globalCompositeOperation='destination-out'; skinCx.strokeStyle=skinCx.fillStyle='#000'; strokePath(0);
   skinCx.restore(); skinTex.needsUpdate=true;
 }
 
 // 障害物は回廊の「片側」に寄せて置く（off=-1..1 横ずれ）→ 反対側を通れば避けられる
 function placeObstacles(path, course){
   const obs={ akaboshi:[], kame:[], bugs:[] };
-  const L=path.len, side=()=> (Math.random()<0.5?-1:1)*(0.45+Math.random()*0.35);
-  for(let i=0;i<course.akaboshi;i++) obs.akaboshi.push({ s:L*(0.18+0.65*(i+Math.random()*0.5)/course.akaboshi), off:side(), r:14 });
-  for(let i=0;i<course.kame;i++) obs.kame.push({ s:L*(0.12+0.75*(i+Math.random()*0.5)/course.kame), off:side(), r:11 });
+  const L=path.len, side=()=> (Math.random()<0.5?-1:1)*(0.65+Math.random()*0.3); // 回廊のはしっこ寄り
+  for(let i=0;i<course.akaboshi;i++) obs.akaboshi.push({ s:L*(0.18+0.65*(i+Math.random()*0.5)/course.akaboshi), off:side(), r:11 });
+  for(let i=0;i<course.kame;i++) obs.kame.push({ s:L*(0.12+0.75*(i+Math.random()*0.5)/course.kame), off:side(), r:8 });
   for(let i=0;i<course.bugs;i++) obs.bugs.push({ s0:L*(0.3+0.45*i/Math.max(1,course.bugs-1)+0.05), range:L*0.05, t:Math.random()*6, stunCd:0, s:0, off:0 });
   return obs;
 }
@@ -395,12 +411,16 @@ function update(dt){
   if(G.manualT>0) G.manualT-=sec;
   if(G.breakMsg){ G.breakMsg.t-=sec; if(G.breakMsg.t<=0) G.breakMsg=null; }
 
-  // おまかせ回転: フロンティアを正面へ
+  // おまかせ回転（議題4: しきい値方式）— フロンティアが裏へ回りかけた時だけ助ける
   if(G.rotAssist && G.manualT<=0 && !(G.pointer.down&&G.pointer.mode==='rot')){
-    const f=ptAt(G.path,G.prog);
-    const target = f.u*Math.PI*2 - Math.PI/2;
-    let d=((target-G.rotY)%(Math.PI*2)+Math.PI*3)%(Math.PI*2)-Math.PI;
-    G.rotY += clamp(d, -3.0*sec, 3.0*sec);
+    const f=ptAt(G.path,G.prog), fc=facing(f.u);
+    if(fc < 0.45) G.assistOn=true;        // 裏へ回りかけた→回し始める
+    if(fc > 0.92) G.assistOn=false;       // 正面まで来たら手を離す（ヒステリシス）
+    if(G.assistOn){
+      const target = -f.u*Math.PI*2;
+      let d=((target-G.rotY)%(Math.PI*2)+Math.PI*3)%(Math.PI*2)-Math.PI;
+      G.rotY += clamp(d, -3.0*sec, 3.0*sec);
+    }
   }
   pearGroup.rotation.y=G.rotY;
   pearGroup.updateMatrixWorld();
@@ -436,10 +456,10 @@ function update(dt){
   // 障害物ヒット判定（回廊内の片側にあるので、反対側を通れば避けられる）
   for(const a of G.obs.akaboshi){ if(a.s<G.prog-0.05||a.s>G.prog+0.5) continue;
     const q=obstaclePos(a,a.s,half); if(facing(q.u)<0) continue; const sp=toScreen(q.p);
-    if(dist(G.knife.x,G.knife.y,sp.x,sp.y)<a.r+6){ SFX.slip(); G.slipT=0.35; FX.burst(sp.x,sp.y,'#ff7e1e',8); peelBreak('赤星病でつるっ！'); a.s=-1; return; } }
+    if(dist(G.knife.x,G.knife.y,sp.x,sp.y)<a.r+3){ SFX.slip(); G.slipT=0.35; FX.burst(sp.x,sp.y,'#ff7e1e',8); peelBreak('赤星病でつるっ！'); a.s=-1; return; } }
   for(const k of G.obs.kame){ if(k.s<G.prog-0.05||k.s>G.prog+0.5) continue;
     const q=obstaclePos(k,k.s,half); if(facing(q.u)<0) continue; const sp=toScreen(q.p);
-    if(dist(G.knife.x,G.knife.y,sp.x,sp.y)<k.r+6){ FX.burst(sp.x,sp.y,'#3a2b1e',8); peelBreak('カメムシ跡でガリッ！'); k.s=-1; return; } }
+    if(dist(G.knife.x,G.knife.y,sp.x,sp.y)<k.r+3){ FX.burst(sp.x,sp.y,'#3a2b1e',8); peelBreak('カメムシ跡でガリッ！'); k.s=-1; return; } }
 
   // 前方探索（スクリーン座標で最近傍）
   const maxAdvPx=G.course.speed*sec;
@@ -474,7 +494,7 @@ function update(dt){
     G.ribbon.push({ w:wNow, px:advPx });
     eraseSkin(oldProg,G.prog,wNow,G.lat||0);
     drawGuide(G.prog);
-    if((G.prog-G.lastShariS)*pxPerWorld>26){ G.lastShariS=G.prog; SFX.shari(G.combo|0);
+    if((G.prog-G.lastShariS)*pxPerWorld>26){ G.lastShariS=G.prog; SFX.shari(G.combo|0, 34-wNow);
       const sp=toScreen(ptAt(G.path,G.prog).p); FX.burst(sp.x,sp.y,'#c79a63',3,0.8); }
     if(G.prog>=G.path.len-3/pxPerWorld) finish();
   }
@@ -550,8 +570,20 @@ function render(){
         const pulse=1+Math.sin(clock()/180)*0.25;
         ctx.save(); ctx.strokeStyle='#fff'; ctx.lineWidth=3; ctx.globalAlpha=0.9;
         ctx.beginPath(); ctx.arc(sp.x,sp.y,13*pulse,0,6.2832); ctx.stroke();
-        ctx.fillStyle='#ffe27a'; ctx.font='bold 11px "Segoe UI"';
-        ctx.fillText('ここ！',sp.x,sp.y-18*pulse); ctx.restore();
+        // 議題3(千唐×まとん): ○＋小さな進行矢印
+        const f2=ptAt(G.path,Math.min(G.path.len,G.prog+0.12)); const sp2=toScreen(f2.p);
+        const ang=Math.atan2(sp2.y-sp.y, sp2.x-sp.x);
+        ctx.translate(sp.x,sp.y); ctx.rotate(ang); ctx.fillStyle='#ffe27a';
+        ctx.beginPath(); ctx.moveTo(30,0); ctx.lineTo(19,-6); ctx.lineTo(19,6); ctx.closePath(); ctx.fill();
+        ctx.rotate(-ang); ctx.font='bold 11px "Segoe UI"'; ctx.textAlign='center';
+        ctx.fillText('ここ！',0,-18*pulse);
+        // 議題5(瑞季×千唐): つぎの障害物の予告（回廊のどっち側か）
+        let nxt=null, nd=1e9;
+        for(const o of [...G.obs.akaboshi.map(a=>({...a,t:'★'})), ...G.obs.kame.map(k=>({...k,t:'●'}))]){
+          if(o.s>G.prog && o.s-G.prog<nd){ nd=o.s-G.prog; nxt=o; } }
+        if(nxt && nd*pxPerWorld<260){ ctx.fillStyle=nxt.t==='★'?'#ff9a4a':'#c9a06a'; ctx.font='bold 11px "Segoe UI"';
+          ctx.fillText('つぎ '+(nxt.off<0?'←':'')+nxt.t+(nxt.off>0?'→':'')+' よけろ', 0, 30); }
+        ctx.restore();
       } else {
         ctx.fillStyle='#7ec8ff'; ctx.font='bold 13px "Segoe UI"'; ctx.textAlign='center';
         ctx.fillText('← うら側！ドラッグして回そう →', W/2-40, H-40);
@@ -590,7 +622,7 @@ function renderCountdown(){
     if(cd.n>i){ ctx.save(); ctx.globalAlpha=0.35; ctx.beginPath(); ctx.arc(lx,ly,30,0,6.2832);
       ctx.fillStyle='#ff5040'; ctx.fill(); ctx.restore(); } }
   ctx.textAlign='center'; ctx.fillStyle='#ccc'; ctx.font='13px "Segoe UI"';
-  ctx.fillText('らせんコースを回しながら剥き登れ！ 消灯でスタート', W/2, by+bh+30);
+  ctx.fillText('ヘタから下へ、回しながら剥き下ろせ！ 消灯でスタート', W/2, by+bh+30);
 }
 function updateCountdown(dt){
   cd.t+=dt/1000; G.wobT+=dt/1000;
@@ -604,7 +636,7 @@ function renderTitle(){
   ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='bold 36px "Segoe UI"';
   ctx.fillText('なしむきパズル 3D', W/2, 314);
   ctx.font='13px "Segoe UI"'; ctx.fillStyle='#bcd';
-  ctx.fillText('ごつごつ梨を回しながら、らせんコースを剥き登れ！', W/2, 344);
+  ctx.fillText('ごつごつ梨を回しながら、ヘタから下へ らせんに剥き下ろせ！', W/2, 344);
   ctx.fillText('★赤星病・カメムシ跡は回廊のはしっこ→よけて通れ！ 速く剥くほど皮は細くなる', W/2, 363);
   for(let i=0;i<3;i++){
     const b=BTN.course[i],on=selCourse===i,c=COURSES[i];
