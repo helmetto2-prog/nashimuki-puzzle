@@ -179,11 +179,13 @@ function buildMeshes(){
 }
 
 /* ============================ コース＆ゲーム ============================ */
-const COURSES = [
-  { name:'初級', col:'#4ec04e', width:38, speed:240, turns:2.5, akaboshi:0, kame:0, bugs:0 },
-  { name:'中級', col:'#e8b93a', width:26, speed:210, turns:3.5, akaboshi:1, kame:2, bugs:1 },
-  { name:'上級', col:'#e8524a', width:15, speed:185, turns:5.0, akaboshi:3, kame:3, bugs:2 },
+const COURSES = [ // width=回廊の広さ(この中なら自由に操縦して剥ける)
+  { name:'初級', col:'#4ec04e', width:56, speed:240, turns:2.5, akaboshi:1, kame:1, bugs:0 },
+  { name:'中級', col:'#e8b93a', width:44, speed:220, turns:3.5, akaboshi:2, kame:3, bugs:1 },
+  { name:'上級', col:'#e8524a', width:32, speed:200, turns:5.0, akaboshi:4, kame:5, bugs:2 },
 ];
+// スピード→皮の細さ（速いほど細い＝かっこいい）
+const speedToW = v => clamp(34 - (v-40)*(24/200), 10, 34); // 40px/s→34px太, 240px/s→10px細
 const MODES = [
   { name:'しらふ',   icon:'😐', wob:0,  sway:0 },
   { name:'ほろよい', icon:'🍺', wob:6,  sway:0 },
@@ -241,41 +243,60 @@ function drawGuide(fromS){
   guideCx.globalAlpha=0.5; drawLine(texBand, G.course.col, []);
   guideCx.globalAlpha=0.85; drawLine(2.5, '#ffffff', [8,10]);
   guideCx.globalAlpha=1; guideCx.setLineDash([]);
-  // 赤星病・カメムシ跡
-  for(const a of G.obs.akaboshi){ if(a.s<fromS) continue; const q=ptAt(G.path,a.s);
-    const x=q.u*TEXW, y=(1-q.v)*TEXH;
-    const gr=guideCx.createRadialGradient(x,y,2,x,y,26);
-    gr.addColorStop(0,'rgba(255,120,30,0.9)'); gr.addColorStop(1,'rgba(255,120,30,0)');
-    guideCx.fillStyle=gr; guideCx.beginPath(); guideCx.arc(x,y,26,0,6.2832); guideCx.fill(); }
-  for(const k of G.obs.kame){ if(k.s<fromS) continue; const q=ptAt(G.path,k.s);
-    const x=q.u*TEXW, y=(1-q.v)*TEXH;
-    guideCx.fillStyle='rgba(45,32,20,0.85)';
-    guideCx.beginPath(); guideCx.ellipse(x,y,10,7,0.4,0,6.2832); guideCx.fill(); }
+  // 赤星病・カメムシ跡（回廊内の片側に寄せて描く＝反対側を通れば避けられる）
+  const half=G.course.width/2;
+  const toUV=(p)=>{ const th=Math.atan2(p.z,p.x); let u=th/(Math.PI*2); if(u<0)u+=1;
+    const v=clamp((p.y+1.05)/2.1,0,1); return {x:u*TEXW, y:(1-v)*TEXH}; };
+  for(const a of G.obs.akaboshi){ if(a.s<fromS) continue;
+    const {x,y}=toUV(obstaclePos(a,a.s,half).p);
+    const gr=guideCx.createRadialGradient(x,y,2,x,y,24);
+    gr.addColorStop(0,'rgba(255,120,30,0.95)'); gr.addColorStop(1,'rgba(255,120,30,0)');
+    guideCx.fillStyle=gr; guideCx.beginPath(); guideCx.arc(x,y,24,0,6.2832); guideCx.fill();
+    guideCx.fillStyle='#fff'; guideCx.font='bold 14px serif'; guideCx.textAlign='center'; guideCx.fillText('★',x,y+5); }
+  for(const k of G.obs.kame){ if(k.s<fromS) continue;
+    const {x,y}=toUV(obstaclePos(k,k.s,half).p);
+    guideCx.fillStyle='rgba(45,32,20,0.9)';
+    guideCx.beginPath(); guideCx.ellipse(x,y,12,8,0.4,0,6.2832); guideCx.fill();
+    guideCx.fillStyle='rgba(20,12,6,0.9)'; guideCx.beginPath(); guideCx.ellipse(x+3,y+2,5,3,0,0,6.2832); guideCx.fill(); }
   guideTex.needsUpdate=true;
 }
 
-function eraseSkin(s0,s1){
-  const wPx=G.course.width;
+// 皮を消す: 幅wPx（今のスピード依存）・横ずれlat（回廊内のどこを通ったか）
+function eraseSkin(s0,s1,wPx,latPx){
   skinCx.save(); skinCx.globalCompositeOperation='destination-out';
+  const half=G.course.width/2;
   for(let s=s0; s<=s1; s+=2/pxPerWorld*3){
-    const q=ptAt(G.path,s);
-    const rWorld=(wPx/2+4)/pxPerWorld;
-    const rx=rWorld/(2*Math.PI*Math.max(0.15,Rv(q.v)))*TEXW;
+    const o={off:clamp(latPx/half,-1,1)};
+    const q=obstaclePos(o,s,half);
+    const p=q.p; const th=Math.atan2(p.z,p.x); let u=th/(Math.PI*2); if(u<0)u+=1;
+    const v=clamp((p.y+1.05)/2.1,0,1);
+    const rWorld=(wPx/2+3)/pxPerWorld;
+    const rx=rWorld/(2*Math.PI*Math.max(0.15,Rv(v)))*TEXW;
     const ry=rWorld/2.1*TEXH;
-    const x=q.u*TEXW, y=(1-q.v)*TEXH;
+    const x=u*TEXW, y=(1-v)*TEXH;
     for(const ox of [0,-TEXW,TEXW]){
       skinCx.beginPath(); skinCx.ellipse(x+ox,y,rx,ry,0,0,6.2832); skinCx.fill(); }
   }
   skinCx.restore(); skinTex.needsUpdate=true;
 }
 
+// 障害物は回廊の「片側」に寄せて置く（off=-1..1 横ずれ）→ 反対側を通れば避けられる
 function placeObstacles(path, course){
   const obs={ akaboshi:[], kame:[], bugs:[] };
-  const L=path.len;
-  for(let i=0;i<course.akaboshi;i++) obs.akaboshi.push({ s:L*(0.22+0.6*i/Math.max(1,course.akaboshi-1)+Math.random()*0.05) });
-  for(let i=0;i<course.kame;i++) obs.kame.push({ s:L*(0.15+0.65*(i+Math.random()*0.4)/course.kame), half:44/pxPerWorld });
-  for(let i=0;i<course.bugs;i++) obs.bugs.push({ s0:L*(0.3+0.45*i/Math.max(1,course.bugs-1)+0.05), range:L*0.05, t:Math.random()*6, stunCd:0, s:0 });
+  const L=path.len, side=()=> (Math.random()<0.5?-1:1)*(0.45+Math.random()*0.35);
+  for(let i=0;i<course.akaboshi;i++) obs.akaboshi.push({ s:L*(0.18+0.65*(i+Math.random()*0.5)/course.akaboshi), off:side(), r:14 });
+  for(let i=0;i<course.kame;i++) obs.kame.push({ s:L*(0.12+0.75*(i+Math.random()*0.5)/course.kame), off:side(), r:11 });
+  for(let i=0;i<course.bugs;i++) obs.bugs.push({ s0:L*(0.3+0.45*i/Math.max(1,course.bugs-1)+0.05), range:L*0.05, t:Math.random()*6, stunCd:0, s:0, off:0 });
   return obs;
+}
+// 障害物の3D位置（コース上の点から横方向にoff×half分ずらす）
+function obstaclePos(o, s, half){
+  const q=ptAt(G.path,s), q2=ptAt(G.path,Math.min(G.path.len,s+0.02));
+  const dir=q2.p.clone().sub(q.p).normalize();
+  const nrm=q.p.clone().normalize();               // 表面法線≒中心からの向き
+  const lat=nrm.clone().cross(dir).normalize();    // 横方向
+  const offW=(o.off||0)*half/pxPerWorld;
+  return { p:q.p.clone().add(lat.multiplyScalar(offW)), u:q.u, v:q.v };
 }
 
 function newGame(){
@@ -411,10 +432,14 @@ function update(dt){
   const dFront=dist(G.knife.x,G.knife.y,fs.x,fs.y);
   if(!G.peeling){ if(dFront<30 && facing(front.u)>0){ G.peeling=true; } else return; }
 
-  let half=G.course.width/2;
-  for(const k of G.obs.kame){ if(Math.abs(G.prog-k.s)<k.half){ half*=0.55; break; } }
-  for(const a of G.obs.akaboshi){ const q=ptAt(G.path,a.s); const sp=toScreen(q.p);
-    if(facing(q.u)>0 && dist(G.knife.x,G.knife.y,sp.x,sp.y)<26){ if(G.slipT<=0.1) SFX.slip(); G.slipT=0.25; } }
+  const half=G.course.width/2;
+  // 障害物ヒット判定（回廊内の片側にあるので、反対側を通れば避けられる）
+  for(const a of G.obs.akaboshi){ if(a.s<G.prog-0.05||a.s>G.prog+0.5) continue;
+    const q=obstaclePos(a,a.s,half); if(facing(q.u)<0) continue; const sp=toScreen(q.p);
+    if(dist(G.knife.x,G.knife.y,sp.x,sp.y)<a.r+6){ SFX.slip(); G.slipT=0.35; FX.burst(sp.x,sp.y,'#ff7e1e',8); peelBreak('赤星病でつるっ！'); a.s=-1; return; } }
+  for(const k of G.obs.kame){ if(k.s<G.prog-0.05||k.s>G.prog+0.5) continue;
+    const q=obstaclePos(k,k.s,half); if(facing(q.u)<0) continue; const sp=toScreen(q.p);
+    if(dist(G.knife.x,G.knife.y,sp.x,sp.y)<k.r+6){ FX.burst(sp.x,sp.y,'#3a2b1e',8); peelBreak('カメムシ跡でガリッ！'); k.s=-1; return; } }
 
   // 前方探索（スクリーン座標で最近傍）
   const maxAdvPx=G.course.speed*sec;
@@ -436,11 +461,18 @@ function update(dt){
   if(adv>0.0008){
     const oldProg=G.prog; G.prog+=adv;
     const advPx=adv*pxPerWorld;
+    // 横ずれ: 包丁がコース中心線からどれだけ横に外れているか（符号つき）
+    { const q=ptAt(G.path,G.prog), q2=ptAt(G.path,Math.min(G.path.len,G.prog+0.02));
+      const a=toScreen(q.p), b=toScreen(q2.p);
+      const dx=b.x-a.x, dy=b.y-a.y, L=Math.hypot(dx,dy)||1;
+      G.lat = ((G.knife.x-a.x)*(-dy) + (G.knife.y-a.y)*dx)/L; }
+    // スピード→細さ（速いほど細い）: 実速度をEMAで平滑化
+    const instV=advPx/sec; G.speedEMA=lerp(G.speedEMA||instV, instV, 0.15);
+    const wNow=speedToW(G.speedEMA);
     G.combo+=advPx/10; G.comboBest=Math.max(G.comboBest,G.combo);
     G.peeledPx+=advPx;
-    // 皮リボン履歴（幅=今の帯幅）
-    G.ribbon.push({ w:half*2, px:advPx });
-    eraseSkin(oldProg,G.prog);
+    G.ribbon.push({ w:wNow, px:advPx });
+    eraseSkin(oldProg,G.prog,wNow,G.lat||0);
     drawGuide(G.prog);
     if((G.prog-G.lastShariS)*pxPerWorld>26){ G.lastShariS=G.prog; SFX.shari(G.combo|0);
       const sp=toScreen(ptAt(G.path,G.prog).p); FX.burst(sp.x,sp.y,'#c79a63',3,0.8); }
@@ -469,7 +501,7 @@ function drawRibbon(x0,y0,availH,big){
     if(r.gap){ y+=8*sc; i++; continue; }
     const h=Math.max(1.2,r.px*0.55)*sc;
     const wig=Math.sin(i*0.15)* (big?10:6);
-    const w=Math.max(2, r.w*(big?0.55:0.4));
+    const w=Math.max(1.5, r.w*(big?0.9:0.62));   // 幅=剥いた時のスピードで決まる細さ
     // 皮の外側（茶）と内側（クリーム）の2本で「皮」感
     ctx.fillStyle='#a9743d'; ctx.fillRect(x0+wig-w/2, y, w, h+0.5);
     ctx.fillStyle='#f2e2be'; ctx.fillRect(x0+wig-w/2+w*0.62, y, w*0.38, h+0.5);
@@ -496,6 +528,9 @@ function render(){
   ctx.fillText(cmOf(G.peeledPx)+'cm', W-52, H-104);
   ctx.fillStyle='#9fb0e8'; ctx.font='10px "Segoe UI"';
   ctx.fillText((G.prog/G.path.len*100|0)+'% むけた', W-52, H-90);
+  if(G.peeling && G.speedEMA){ const wN=speedToW(G.speedEMA);
+    ctx.fillStyle=wN<16?'#ffd700':wN<24?'#7CFC00':'#bcd'; ctx.font='bold 11px "Segoe UI"';
+    ctx.fillText(wN<16?'極細！':wN<24?'ほそめ':'ふとめ', W-52, H-118); }
 
   // 障害/エフェクト
   FX.draw();
@@ -570,7 +605,7 @@ function renderTitle(){
   ctx.fillText('なしむきパズル 3D', W/2, 314);
   ctx.font='13px "Segoe UI"'; ctx.fillStyle='#bcd';
   ctx.fillText('ごつごつ梨を回しながら、らせんコースを剥き登れ！', W/2, 344);
-  ctx.fillText('むいた皮は一本のリボンに。薄く長く切らさずに', W/2, 363);
+  ctx.fillText('★赤星病・カメムシ跡は回廊のはしっこ→よけて通れ！ 速く剥くほど皮は細くなる', W/2, 363);
   for(let i=0;i<3;i++){
     const b=BTN.course[i],on=selCourse===i,c=COURSES[i];
     ctx.fillStyle=on?c.col:'rgba(255,255,255,0.08)'; ctx.beginPath(); ctx.roundRect(b.x,b.y,b.w,b.h,8); ctx.fill();
@@ -602,7 +637,9 @@ function renderOver(){
   ctx.font='14px "Segoe UI"'; ctx.fillStyle='#bcd';
   ctx.fillText(G.course.name+'／'+G.mode.icon+G.mode.name, W/2-90, 308);
   ctx.fillText('ぷつん×'+G.breaks+'  最長つながり'+(G.comboBest|0), W/2-90, 328);
-  if(G.newBest){ ctx.fillStyle='#ffd700'; ctx.font='bold 17px "Segoe UI"'; ctx.fillText('✨自己ベスト更新！✨', W/2-90, 358); }
+  { const ws=G.ribbon.filter(r=>!r.gap).map(r=>r.w); const avgW=ws.length?ws.reduce((a,b)=>a+b,0)/ws.length:0;
+    ctx.fillText('平均の細さ: '+(avgW<16?'極細（達人）':avgW<24?'ほそめ':'ふとめ'), W/2-90, 346); }
+  if(G.newBest){ ctx.fillStyle='#ffd700'; ctx.font='bold 17px "Segoe UI"'; ctx.fillText('✨自己ベスト更新！✨', W/2-90, 376); }
   // 戦利品：皮リボン大きめ表示
   ctx.fillStyle='rgba(20,26,58,0.9)'; ctx.fillRect(W-150,90,140,H-240);
   ctx.strokeStyle='#ffe27a'; ctx.strokeRect(W-150,90,140,H-240);
