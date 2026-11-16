@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -631,29 +631,55 @@ function updateCountdown(dt){
   else if(cd.t>0.55){ SFX.go(); BGM.play(); G.rotY=pearGroup.rotation.y; state='play'; }
 }
 
+// ── v05：タイトル画面を作り直し：ロゴ（太字・ふちどり・グラデーション・1文字ずつ登場）と、明滅するスタートの帯 ──
+function coolLogo(text,cx,y,size,t,o){ o=o||{};
+  ctx.save(); ctx.textAlign='center'; ctx.textBaseline='alphabetic'; ctx.lineJoin='round';
+  ctx.font='900 '+size+'px '+(o.font||'"Yu Gothic UI","Hiragino Sans","Meiryo","Segoe UI",sans-serif');
+  const chars=[...text], ws=chars.map(ch=>ctx.measureText(ch).width), total=ws.reduce((p,q)=>p+q,0);
+  const k=(o.maxW&&total>o.maxW)?o.maxW/total:1;                       // はみ出すときは縮める
+  let x=cx-total*k/2; const c=o.cols||['#fff8d2','#ffd84f','#ff8a2e'];
+  chars.forEach((ch,i)=>{ const e=Math.max(0,Math.min(1,(t-(o.delay==null?0.1:o.delay)-i*0.07)/0.45));
+    const back=1+2.70158*Math.pow(e-1,3)+1.70158*Math.pow(e-1,2), bob=Math.sin(t*2.2-i*0.55)*(o.bob==null?3:o.bob)*e;
+    ctx.save(); ctx.translate(x+ws[i]*k/2, y+bob-(1-e)*40); ctx.scale(Math.max(0.001,back*k),Math.max(0.001,back*k)); ctx.globalAlpha=e;
+    ctx.shadowColor=o.glow||'rgba(255,200,90,0.9)'; ctx.shadowBlur=22;
+    ctx.strokeStyle=o.edge||'#1b1145'; ctx.lineWidth=size*0.2; ctx.strokeText(ch,0,0);
+    ctx.shadowBlur=0; ctx.strokeStyle=o.rim||'#ffffff'; ctx.lineWidth=size*0.08; ctx.strokeText(ch,0,0);
+    const g=ctx.createLinearGradient(0,-size*0.9,0,size*0.12);
+    g.addColorStop(0,c[0]); g.addColorStop(0.45,c[1]); g.addColorStop(1,c[2]); ctx.fillStyle=g; ctx.fillText(ch,0,0);
+    ctx.restore(); x+=ws[i]*k; });
+  ctx.restore(); }
+function coolStart(label,cx,y,w,h,t,o){ o=o||{}; const p=0.5+0.5*Math.sin(t*3.2), x=cx-w/2, r=h/2, c=o.cols||['#ffe58a','#ffb52e'];
+  ctx.save(); ctx.shadowColor=o.glow||'rgba(255,210,90,0.95)'; ctx.shadowBlur=10+14*p;
+  const g=ctx.createLinearGradient(0,y,0,y+h); g.addColorStop(0,c[0]); g.addColorStop(1,c[1]);
+  ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+  ctx.fillStyle=g; ctx.fill(); ctx.shadowBlur=0; ctx.strokeStyle='#ffffff'; ctx.lineWidth=2.5; ctx.stroke();
+  ctx.fillStyle=o.ink||'#3a2400'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  ctx.font='900 '+Math.round(h*0.42)+'px "Yu Gothic UI","Meiryo","Segoe UI",sans-serif';
+  ctx.fillText(label,cx,y+h*0.65); ctx.restore(); }
 function renderTitle(){
-  pearGroup.rotation.y += 0.006;
-  ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='bold 36px "Segoe UI"';
-  ctx.fillText('なしむきパズル 3D', W/2, 314);
+  pearGroup.rotation.y += 0.006; const tt=clock()/1000;
+  { const g=ctx.createLinearGradient(0,250,0,H); g.addColorStop(0,'rgba(8,14,30,0)'); g.addColorStop(0.2,'rgba(8,14,30,0.55)'); g.addColorStop(1,'rgba(8,14,30,0.78)'); ctx.fillStyle=g; ctx.fillRect(0,250,W,H-250); }
+  ctx.textAlign='center'; ctx.font='bold 12px "Segoe UI",sans-serif'; ctx.fillStyle='rgba(230,240,170,0.9)';
+  { const s='PEAR PEELING PUZZLE', st=11; [...s].forEach((ch,i)=>ctx.fillText(ch, W/2-(s.length-1)*st/2+i*st, 268)); }
+  coolLogo('なしむきパズル 3D', W/2, 318, 46, tt, {maxW:W-36, cols:['#fffde0','#e6ee6a','#8fb52e'], edge:'#22300a', glow:'rgba(210,235,90,0.9)'});
   ctx.font='13px "Segoe UI"'; ctx.fillStyle='#bcd';
   ctx.fillText('ごつごつ梨を回しながら、ヘタから下へ らせんに剥き下ろせ！', W/2, 344);
   ctx.fillText('★赤星病・カメムシ跡は回廊のはしっこ→よけて通れ！ 速く剥くほど皮は細くなる', W/2, 363);
   for(let i=0;i<3;i++){
     const b=BTN.course[i],on=selCourse===i,c=COURSES[i];
-    ctx.fillStyle=on?c.col:'rgba(255,255,255,0.08)'; ctx.beginPath(); ctx.roundRect(b.x,b.y,b.w,b.h,8); ctx.fill();
+    ctx.fillStyle=on?c.col:'rgba(20,28,56,0.78)'; ctx.beginPath(); ctx.roundRect(b.x,b.y,b.w,b.h,10); ctx.fill(); ctx.strokeStyle=on?'#fff':'rgba(160,180,240,0.4)'; ctx.lineWidth=on?2.5:1.2; ctx.stroke();
     ctx.fillStyle=on?'#111':'#cde'; ctx.font='bold 16px "Segoe UI"'; ctx.fillText('🧗'+c.name+' '+c.turns+'周',b.x+b.w/2,b.y+29);
   }
   for(let i=0;i<3;i++){
     const b=BTN.mode[i],on=selMode===i,m=MODES[i];
-    ctx.fillStyle=on?'#7ec8ff':'rgba(255,255,255,0.08)'; ctx.beginPath(); ctx.roundRect(b.x,b.y,b.w,b.h,8); ctx.fill();
+    ctx.fillStyle=on?'#7ec8ff':'rgba(20,28,56,0.78)'; ctx.beginPath(); ctx.roundRect(b.x,b.y,b.w,b.h,10); ctx.fill(); ctx.strokeStyle=on?'#fff':'rgba(160,180,240,0.4)'; ctx.lineWidth=on?2.5:1.2; ctx.stroke();
     ctx.fillStyle=on?'#111':'#cde'; ctx.font='bold 15px "Segoe UI"'; ctx.fillText(m.icon+m.name,b.x+b.w/2,b.y+29);
   }
   const best=Store.get(selCourse,selMode);
   ctx.fillStyle='#9fb0e8'; ctx.font='13px "Segoe UI"';
   ctx.fillText(best?('ベスト: '+best.toFixed(2)+'s'):'ベスト: まだ記録なし', W/2, 532);
-  const b=BTN.start, blink=(clock()/450|0)%2===0;
-  ctx.fillStyle=blink?'#ffe27a':'#c9a94f'; ctx.beginPath(); ctx.roundRect(b.x,b.y,b.w,b.h,10); ctx.fill();
-  ctx.fillStyle='#221'; ctx.font='bold 22px "Segoe UI"'; ctx.fillText('🏁 スタート！', W/2, b.y+34);
+  const b=BTN.start;
+  coolStart('🏁 スタート！', b.x+b.w/2, b.y, b.w, b.h, tt);
   ctx.fillStyle='#667'; ctx.font='11px "Segoe UI"'; ctx.fillText('1/2/3=コース Q/W/E=酔い ←→=回転 Space=開始', W/2, 622);
 }
 
